@@ -1,0 +1,262 @@
+/* Project Encore: BFG - Localized Private Game Restoration Server
+ * Copyright (C) 2026 Paficent <paficent@tutamail.com> & Contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+// abstraction layer for handling game logic.
+package game
+
+import (
+	"log"
+	"sync"
+	"time"
+
+	"paficent/bfg/db"
+	"paficent/bfg/save"
+	"paficent/bfg/utils"
+
+	"github.com/Paficent/GoFox2X/data"
+	"github.com/Paficent/GoFox2X/protocol"
+	"github.com/Paficent/GoFox2X/server"
+	"github.com/Paficent/GoFox2X/transport"
+)
+
+type HandlerFunc func(*Context)
+
+type Context struct {
+	Conn   *transport.Conn
+	Params *data.GFSObject
+	mgr    *Manager
+}
+
+func (c *Context) Player() *Player { return playerFromConn(c.Conn) }
+func (c *Context) Island() *Island {
+	p := c.Player()
+	if p == nil {
+		return nil
+	}
+	return p.GetActiveIsland()
+}
+
+func (c *Context) Int(key string) int       { return paramInt(c.Params, key) }
+func (c *Context) Int64(key string) int64   { return int64(paramInt(c.Params, key)) }
+func (c *Context) Float(key string) float64 { return paramFloat(c.Params, key) }
+func (c *Context) Str(key string) string    { s, _ := c.Params.GetUtfString(key); return s }
+
+func (c *Context) Reply(command string, payload *data.GFSObject) {
+	c.mgr.reply(c.Conn, command, payload)
+}
+func (c *Context) Fail(command, message string) {
+	c.Reply(command, data.MakeGFSObject().PutBool("success", false).
+		PutUtfString("error", message).PutUtfString("message", message))
+}
+
+func (c *Context) Manager() *Manager      { return c.mgr }
+func (c *Context) Static() *db.StaticData { return c.mgr.Static }
+
+type Manager struct {
+	Static *db.StaticData
+
+	store  *save.Store
+	router *server.ExtensionRouter
+	debug  bool
+
+	mu      sync.Mutex
+	players map[int64]*Player
+	conns   map[int64]*transport.Conn
+
+	timers *timerService
+	sendMu sync.Mutex // serialises writes: handler + timer goroutines can both send
+}
+
+func New(static *db.StaticData, store *save.Store, debug bool) *Manager {
+	m := &Manager{
+		Static:  static,
+		store:   store,
+		router:  server.NewExtensionRouter(),
+		debug:   debug,
+		players: map[int64]*Player{},
+		conns:   map[int64]*transport.Conn{},
+		timers:  newTimerService(),
+	}
+	m.loadPlayers()
+
+	registerLoginHandlers(m)
+	registerMonsterHandlers(m)
+	registerStructureHandlers(m)
+	registerIslandHandlers(m)
+	registerEconomyHandlers(m)
+	registerQuestHandlers(m)
+
+	m.rearmUpgradeTimers()
+	return m
+}
+
+func (m *Manager) Handle(command string, fn HandlerFunc) {
+	m.router.On(command, func(conn *transport.Conn, params *data.GFSObject) {
+		fn(&Context{Conn: conn, Params: params, mgr: m})
+	})
+}
+
+// for commands that change a players state (autosaves immediately)
+func (m *Manager) HandleWrite(command string, fn HandlerFunc) {
+	m.router.On(command, func(conn *transport.Conn, params *data.GFSObject) {
+		ctx := &Context{Conn: conn, Params: params, mgr: m}
+		fn(ctx)
+		if p := ctx.Player(); p != nil {
+			m.runQuestEval(ctx, p)
+			if err := m.savePlayer(p); err != nil {
+				log.Printf("save after %s failed: %v", command, err)
+			}
+		}
+	})
+}
+
+// returned object sent back immediately under the same name
+func (m *Manager) HandleReply(command string, build func(*Context) *data.GFSObject) {
+	m.Handle(command, func(ctx *Context) {
+		ctx.Reply(command, build(ctx))
+	})
+}
+
+// commands that need an empty reply (i'm looking at you keep-alive)
+func (m *Manager) HandleAck(commands ...string) {
+	for _, command := range commands {
+		command := command
+		m.Handle(command, func(ctx *Context) {
+			ctx.Reply(command, data.MakeGFSObject())
+		})
+	}
+}
+
+type PlayerHandlerFunc func(*Context, *Player)
+
+func (m *Manager) HandlePlayer(command string, fn PlayerHandlerFunc) {
+	m.HandleWrite(command, func(ctx *Context) {
+		if p := ctx.Player(); p != nil {
+			fn(ctx, p)
+		}
+	})
+}
+
+func (m *Manager) HandlePlayerRead(command string, fn PlayerHandlerFunc) {
+	m.Handle(command, func(ctx *Context) {
+		if p := ctx.Player(); p != nil {
+			fn(ctx, p)
+		}
+	})
+}
+
+func stamp(o *data.GFSObject) *data.GFSObject {
+	now := nowMS()
+	return o.PutLong("server_time", now).PutLong("last_updated", now)
+}
+
+func (m *Manager) GetOrCreatePlayer(bbbID int64) *Player {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if p, ok := m.players[bbbID]; ok {
+		return p
+	}
+	p := newPlayer(bbbID, bbbID, m.Static)
+	m.players[bbbID] = p
+	return p
+}
+
+func (m *Manager) Player(bbbID int64) *Player {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.players[bbbID]
+}
+
+func (m *Manager) reply(conn *transport.Conn, command string, payload *data.GFSObject) {
+	m.send(conn, protocol.ExtensionResponse(command, payload), "ext  "+command)
+}
+
+func (m *Manager) sendSystem(conn *transport.Conn, action protocol.Action, label string, payload *data.GFSObject) {
+	m.send(conn, protocol.NewMessage(protocol.System, action, payload), "sys  "+label)
+}
+
+func (m *Manager) send(conn *transport.Conn, msg *protocol.Message, label string) {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
+	body, err := msg.MarshalBinary()
+	if err != nil {
+		log.Printf("  send %-30s MARSHAL ERROR: %v", label, err)
+		return
+	}
+	if m.debug {
+		utils.Dump("send", msg)
+	}
+	if err := conn.Send(msg); err != nil {
+		log.Printf("  send %-30s SEND ERROR (%d bytes): %v", label, len(body), err)
+		return
+	}
+	flag := ""
+	if len(body) > 0xFFFF {
+		flag = "  [BIG FRAME >64KB]"
+	}
+	log.Printf("  send %-30s %6d bytes%s", label, len(body), flag)
+}
+
+// utils:
+// TODO: potentially abstract this to the utils/ folder
+
+func nowMS() int64 {
+	return time.Now().Unix() * 1000
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func playerFromConn(c *transport.Conn) *Player {
+	if p, ok := c.Session.(*Player); ok {
+		return p
+	}
+	return nil
+}
+
+func paramInt(o *data.GFSObject, key string) int {
+	if v, ok := o.GetInt(key); ok {
+		return v
+	}
+	if v, ok := o.GetShort(key); ok {
+		return int(v)
+	}
+	if v, ok := o.GetLong(key); ok {
+		return int(v)
+	}
+	if v, ok := o.GetByte(key); ok {
+		return int(v)
+	}
+	return 0
+}
+
+func paramFloat(o *data.GFSObject, key string) float64 {
+	if v, ok := o.GetDouble(key); ok {
+		return v
+	}
+	if v, ok := o.GetFloat(key); ok {
+		return float64(v)
+	}
+	if v, ok := o.GetInt(key); ok {
+		return float64(v)
+	}
+	return 1.0
+}
