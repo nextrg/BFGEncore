@@ -80,7 +80,23 @@ func registerBakingHandlers(m *Manager) {
 	})
 
 	m.HandlePlayer("gs_speed_up_baking", func(ctx *Context, p *Player) {
-		// TODO: unimplemented
-		// baking still doesn't actually start a timer
+		island := ctx.Island()
+		bakingID := ctx.Int64("user_baking_id")
+		baking := island.FindBaking(bakingID)
+		if baking == nil {
+			ctx.Fail("gs_speed_up_baking", "Invalid baking ID")
+			return
+		}
+
+		now := nowMS()
+		baking.CompleteOn = now
+
+		p.AddProperties(0, 0, 0, 0, 0) //TODO
+
+		ctx.Reply("gs_speed_up_baking", data.MakeGFSObject().
+			PutBool("success", true).
+			PutLong("user_baking_id", bakingID).
+			PutLong("finished_at", now).
+			PutGFSArray("properties", p.GetProperties()))
 	})
 }

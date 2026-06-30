@@ -224,8 +224,8 @@ func (b *Baking) GetSFSObject() *data.GFSObject {
 		PutLong("user_structure", b.UserStructureID).
 		PutInt("food_count", b.Food).
 		PutInt("food_index", b.FoodIndex).
-		PutLong("started_on", b.StartedOn).
-		PutLong("complete_on", b.CompleteOn)
+		PutLong("started_at", b.StartedOn).
+		PutLong("finished_at", b.CompleteOn)
 }
 
 type Island struct {
