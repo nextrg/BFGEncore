@@ -10,6 +10,7 @@
   "dlc_path": "./dlc",
   "users_path": "./auth_users.json",
   "log_path": "./server.log",
+  "constants_path": "./constants.json",
   "refresh_log": true,
   "debug": false
 }
