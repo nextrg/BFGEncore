@@ -99,6 +99,7 @@ func New(static *db.StaticData, store *save.Store, debug bool) *Manager {
 	registerIslandHandlers(m)
 	registerEconomyHandlers(m)
 	registerQuestHandlers(m)
+	registerBakingHandlers(m)
 
 	m.rearmUpgradeTimers()
 	return m

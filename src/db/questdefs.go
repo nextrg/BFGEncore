@@ -133,3 +133,38 @@ func loadStructureType(db *DB) map[int]string {
 	}
 	return out
 }
+
+type FoodOption struct {
+	Food  int
+	Cost  int
+	Time  int
+	Xp    int
+	Label string
+}
+
+func loadFoodOptions(db *DB) map[int][]FoodOption {
+	out := map[int][]FoodOption{}
+	for _, s := range db.Table("structures") {
+		opts, ok := s.JSON("extra")["food_options"].([]any)
+		if !ok {
+			continue
+		}
+		var list []FoodOption
+		for _, o := range opts {
+			m, ok := o.(map[string]any)
+			if !ok {
+				continue
+			}
+			label, _ := m["label"].(string)
+			list = append(list, FoodOption{
+				Food:  numToInt(m["food"]),
+				Cost:  numToInt(m["cost"]),
+				Time:  numToInt(m["time"]),
+				Xp:    numToInt(m["xp"]),
+				Label: label,
+			})
+		}
+		out[s.Int("structure_id")] = list
+	}
+	return out
+}

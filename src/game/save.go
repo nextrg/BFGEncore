@@ -38,6 +38,7 @@ type playerSave struct {
 	ActiveIsland int64     `json:"active_island"`
 	EggSeq       int64     `json:"egg_seq"`
 	BreedingSeq  int64     `json:"breeding_seq"`
+	BakingSeq    int64     `json:"baking_seq"`
 	MonsterSeq   int64     `json:"monster_seq"`
 	StructureSeq int64     `json:"structure_seq"`
 	IslandSeq    int64     `json:"island_seq"`
@@ -61,6 +62,7 @@ func (p *Player) toSave() *playerSave {
 		ActiveIsland: p.ActiveIsland,
 		EggSeq:       p.eggSeq,
 		BreedingSeq:  p.breedingSeq,
+		BakingSeq:    p.bakingSeq,
 		MonsterSeq:   p.monsterSeq,
 		StructureSeq: p.structureSeq,
 		IslandSeq:    p.islandSeq,
@@ -87,6 +89,7 @@ func (ps *playerSave) toPlayer(static *db.StaticData) *Player {
 		levelXP:      static.LevelXP,
 		eggSeq:       ps.EggSeq,
 		breedingSeq:  ps.BreedingSeq,
+		bakingSeq:    ps.BakingSeq,
 		monsterSeq:   ps.MonsterSeq,
 		structureSeq: ps.StructureSeq,
 		islandSeq:    ps.IslandSeq,

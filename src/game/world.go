@@ -206,6 +206,28 @@ func (b *Breeding) GetSFSObject() *data.GFSObject {
 		PutLong("complete_on", b.CompleteOn)
 }
 
+type Baking struct {
+	IslandID        int64
+	UserBakingID    int64
+	UserStructureID int64
+	FoodIndex       int
+	Food            int
+	Xp              int
+	StartedOn       int64
+	CompleteOn      int64
+}
+
+func (b *Baking) GetSFSObject() *data.GFSObject {
+	return data.MakeGFSObject().
+		PutLong("island", b.IslandID).
+		PutLong("user_baking_id", b.UserBakingID).
+		PutLong("user_structure", b.UserStructureID).
+		PutInt("food_count", b.Food).
+		PutInt("food_index", b.FoodIndex).
+		PutLong("started_on", b.StartedOn).
+		PutLong("complete_on", b.CompleteOn)
+}
+
 type Island struct {
 	UserIslandID int64
 	IslandID     int64
@@ -218,6 +240,7 @@ type Island struct {
 	Monsters     []*Monster
 	Eggs         []*Egg
 	Breedings    []*Breeding
+	Bakings      []*Baking
 }
 
 func (i *Island) FindStructure(userStructureID int64) *Structure {
@@ -318,6 +341,25 @@ func (i *Island) RemoveBreeding(userBreedingID int64) {
 	i.Breedings = out
 }
 
+func (i *Island) FindBaking(userBakingID int64) *Baking {
+	for _, b := range i.Bakings {
+		if b.UserBakingID == userBakingID {
+			return b
+		}
+	}
+	return nil
+}
+
+func (i *Island) RemoveBaking(userBakingID int64) {
+	out := i.Bakings[:0]
+	for _, b := range i.Bakings {
+		if b.UserBakingID != userBakingID {
+			out = append(out, b)
+		}
+	}
+	i.Bakings = out
+}
+
 func (i *Island) GetSFSObject() *data.GFSObject {
 	island := data.MakeGFSObject().
 		PutLong("user_island_id", i.UserIslandID).
@@ -361,12 +403,17 @@ func (i *Island) GetSFSObject() *data.GFSObject {
 		breeding.AddSFSObject(b.GetSFSObject())
 	}
 
+	baking := data.MakeGFSArray()
+	for _, b := range i.Bakings {
+		baking.AddSFSObject(b.GetSFSObject())
+	}
+
 	island.PutGFSArray("structures", structures).
 		PutGFSArray("monsters", monsters).
 		PutGFSArray("breeding", breeding).
 		PutGFSArray("torches", data.MakeGFSArray()).
 		PutGFSArray("eggs", eggs).
-		PutGFSArray("baking", data.MakeGFSArray()).
+		PutGFSArray("baking", baking).
 		PutGFSArray("gi_mappings", giMappings)
 	return island
 }

@@ -50,6 +50,7 @@ type StaticData struct {
 	MonsterEntity   map[int]int
 	StructureEntity map[int]int
 	StructureType   map[int]string
+	FoodOptions     map[int][]FoodOption
 
 	breedingCombos map[[2]int][]breedCombo
 	monsterLevels  map[[2]int]LevelInfo
@@ -92,6 +93,7 @@ func LoadStatic(db *DB) *StaticData {
 		MonsterEntity:   loadMonsterEntity(db),
 		StructureEntity: loadStructureEntity(db),
 		StructureType:   loadStructureType(db),
+		FoodOptions:     loadFoodOptions(db),
 
 		breedingCombos: loadBreedingCombos(db),
 		monsterLevels:  loadMonsterLevels(db),

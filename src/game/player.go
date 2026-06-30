@@ -51,6 +51,7 @@ type Player struct {
 	levelXP      map[int]int
 	eggSeq       int64
 	breedingSeq  int64
+	bakingSeq    int64
 	monsterSeq   int64
 	structureSeq int64
 	islandSeq    int64
@@ -173,6 +174,11 @@ func (p *Player) NextEggID() int64 {
 func (p *Player) NextBreedingID() int64 {
 	p.breedingSeq++
 	return p.breedingSeq
+}
+
+func (p *Player) NextBakingID() int64 {
+	p.bakingSeq++
+	return p.bakingSeq
 }
 
 func (p *Player) NextMonsterID() int64 {
